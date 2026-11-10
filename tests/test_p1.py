@@ -121,6 +121,10 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.llm_model, values['LLM_MODEL'])
             self.assertEqual(config.llm_api_key, '')
 
+    def test_entrypoint_imports_with_real_aiogram(self):
+        from tgbot.main import run
+        self.assertTrue(callable(run))
+
     def test_reject_url_with_credentials(self):
         values = {'TELEGRAM_BOT_TOKEN': 'заполнитель', 'LLM_BASE_URL': 'https://user:pass@api.example.com/v1', 'LLM_MODEL': 'тест'}
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, values, clear=True):
@@ -214,6 +218,22 @@ class DialogueTests(unittest.IsolatedAsyncioTestCase):
         await handle_text(FakeMessage(), self.bot, self.db, self.llm, 'Роль')
         row = self.db.connection.execute("SELECT status, telegram_message_id FROM messages WHERE role='assistant'").fetchone()
         self.assertEqual(row, ('unknown', None))
+        self.assertEqual(len(self.db.context(17)), 1)
+
+    async def test_telegram_explicit_rejection_is_failed(self):
+        from aiogram.exceptions import TelegramBadRequest
+        from aiogram.methods import SendMessage
+
+        error = TelegramBadRequest(
+            method=SendMessage(chat_id=17, text='Тестовое сообщение'),
+            message='Telegram отклонил отправку',
+        )
+        self.bot = FakeBot(failure=error)
+        await handle_text(FakeMessage(), self.bot, self.db, self.llm, 'Роль')
+        row = self.db.connection.execute(
+            "SELECT status, telegram_message_id, error_kind FROM messages WHERE role='assistant'"
+        ).fetchone()
+        self.assertEqual(row, ('failed', None, 'TelegramBadRequest'))
         self.assertEqual(len(self.db.context(17)), 1)
 
     async def test_group_and_nontext_ignored(self):
